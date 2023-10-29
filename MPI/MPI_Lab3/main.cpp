@@ -8,6 +8,18 @@
 
 #define PRINTER if (is_main_process) std::cout 
 
+#define PRINT_MATRIX(matrix)            \
+{                                       \
+    for (const auto& row : matrix)      \
+    {                                   \
+        for (auto&& element : row)      \
+        {                               \
+            PRINTER << element << ' ';  \
+        }                               \
+        PRINTER << '\n';                \
+    }                                   \
+}
+
 using std::cout;
 
 template<typename T>
@@ -41,18 +53,6 @@ fixed_values_type get_default_fixed(const std::size_t m, const std::size_t n)
     return fixed_values;
 }
 
-void print_matrix(const matrix_type& matrix)
-{
-    for (const auto& row : matrix)
-    {
-        for (auto&& element : row)
-        {
-            std::cout << element << ' ';
-        }
-        std::cout << '\n';
-    }
-}
-
 void set_fixed(matrix_type& matrix, const fixed_values_type& fixed_values)
 {
     for (const auto& [x, y, value] : fixed_values)
@@ -61,7 +61,15 @@ void set_fixed(matrix_type& matrix, const fixed_values_type& fixed_values)
     }
 }
 
-
+matrix_type smooth_matrix
+(
+    const matrix_type& matrix,
+    const fixed_values_type& fixed_values,
+    const std::size_t iterations
+)
+{
+    return get_zero_matrix(matrix.size(), matrix[0].size());
+}
 
 int main(int argc, char* argv[])
 {
@@ -100,9 +108,28 @@ int main(int argc, char* argv[])
     PRINTER << "Iterations: " << iterations << '\n';
     PRINTER << "Matrix dimensions (m x n): " << m << " x " << n << '\n';
 
-    const double start_time = MPI_Wtime();
+    matrix_type matrix = get_zero_matrix(m, n);
+    fixed_values_type fixed_values = get_default_fixed(m, n);
 
+    set_fixed(matrix, fixed_values);
+
+    if (m <= 20 && n <= 20)
+    {
+        PRINTER << "\nInitial matrix:\n";
+        PRINT_MATRIX(matrix);
+    }
+
+    PRINTER << '\n';
+
+    const double start_time = MPI_Wtime();
+    matrix_type result = smooth_matrix(matrix, fixed_values, iterations);
     const double end_time = MPI_Wtime();
+
+    if (m <= 20 && n <= 20)
+    {
+        PRINTER << "Result:\n";
+        PRINT_MATRIX(result);
+    }
 
     double elapsed_time = end_time - start_time;
     std::cout << std::setprecision(15);
