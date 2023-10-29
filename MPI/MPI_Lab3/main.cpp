@@ -6,9 +6,9 @@
 #include <vector>
 #include <stdlib.h>
 
-using std::cout;
-
 #define PRINTER if (is_main_process) std::cout 
+
+using std::cout;
 
 template<typename T>
 using row_type = std::vector<T>;
@@ -61,6 +61,8 @@ void set_fixed(matrix_type& matrix, const fixed_values_type& fixed_values)
     }
 }
 
+
+
 int main(int argc, char* argv[])
 {
     std::cout << std::fixed << std::setprecision(3);
@@ -97,6 +99,14 @@ int main(int argc, char* argv[])
     PRINTER << "Number of processors: " << number_of_processors << '\n';
     PRINTER << "Iterations: " << iterations << '\n';
     PRINTER << "Matrix dimensions (m x n): " << m << " x " << n << '\n';
+
+    const double start_time = MPI_Wtime();
+
+    const double end_time = MPI_Wtime();
+
+    double elapsed_time = end_time - start_time;
+    std::cout << std::setprecision(15);
+    PRINTER << "Time taken: " << elapsed_time << "s." << std::endl;
 
     MPI_Finalize();
     return EXIT_SUCCESS;
