@@ -93,8 +93,7 @@ matrix_type smooth_matrix
         }
 
         set_fixed(curr_iteration, fixed_values);
-        // std::swap(prev_iteration, curr_iteration);
-        // prev_iteration = std::move(curr_iteration);
+        std::swap(prev_iteration, curr_iteration);
     }
 
     return prev_iteration;
