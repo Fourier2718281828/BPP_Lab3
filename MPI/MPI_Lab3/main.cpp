@@ -8,13 +8,13 @@
 
 #define PRINTER if (is_main_process) std::cout 
 
-#define PRINT_MATRIX(matrix)                     \
+#define PRINT_MATRIX(chunk, M, N)                \
 {                                                \
     for (std::size_t i = 0u; i < M; ++i)         \
     {                                            \
         for (std::size_t j = 0u; j < N; ++j)     \
         {                                        \
-            PRINTER << matrix[i * M + j] << ' '; \
+            PRINTER << chunk[i * N + j] << ' ';  \
         }                                        \
         PRINTER << '\n';                         \
     }                                            \
@@ -24,6 +24,7 @@ using std::cout;
 
 using value_type = float;
 using matrix_type = std::vector<value_type>;
+using row_type = std::vector<value_type>;
 using fixed_values_type = std::vector<std::tuple<std::size_t, std::size_t, value_type>>;
 
 std::size_t M = 0u;
@@ -58,8 +59,55 @@ void set_fixed(matrix_type& matrix, const fixed_values_type& fixed_values)
 {
     for (const auto& [x, y, value] : fixed_values)
     {
-        matrix[x * M + y] = value;
+        matrix[x * N + y] = value;
     }
+}
+
+inline bool is_index_within_rank(const std::size_t i, const std::size_t j, const int rank, const std::size_t chunk_size)
+{
+    const std::size_t urank = static_cast<std::size_t>(rank);
+    const std::size_t first_index = (urank) * chunk_size;
+    const std::size_t last_index  = (urank + 1) * chunk_size;
+    const std::size_t linear_index = i * N + j;
+    
+    return linear_index >= first_index && linear_index < last_index;
+}
+
+inline std::size_t to_chunk_index(const std::size_t index, const int rank, const std::size_t chunk_size)
+{
+    return index - rank * chunk_size;
+}
+
+void set_fixed_according_to_rank
+(
+    matrix_type& chunk, 
+    const fixed_values_type& fixed_values, 
+    const int rank, 
+    const std::size_t chunk_size
+)
+{
+    for (const auto& [x, y, value] : fixed_values)
+    {
+        if (is_index_within_rank(x, y, rank, chunk_size))
+        {
+            const std::size_t actual_index = x * N + y;
+            const std::size_t index_in_chunk = to_chunk_index(actual_index, rank, chunk_size);
+
+            chunk[index_in_chunk] = value;
+        }
+    }
+}
+
+inline value_type smooth_neighborhood
+(
+    const value_type i_j,
+    const value_type li_j,
+    const value_type i_lj,
+    const value_type ri_j,
+    const value_type i_rj
+)
+{
+    return (i_j + li_j + i_lj + ri_j + i_rj) / 5;
 }
 
 void smooth_chunk
@@ -69,7 +117,7 @@ void smooth_chunk
     const std::size_t iteration_count
 )
 {
-    const std::size_t m = M;
+    const std::size_t m_chunk = chunk.size() / N;
     const std::size_t n = N;
 
     int number_of_processors;
@@ -78,75 +126,85 @@ void smooth_chunk
     MPI_Comm_size(MPI_COMM_WORLD, &number_of_processors);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    const bool has_left_neighbor  = rank != 0;
-    const bool has_right_neighbor = rank != number_of_processors - 1;
+    const bool has_upper_neighbor  = rank != 0;
+    const bool has_lower_neighbor = rank != number_of_processors - 1;
+
+    const int upper_neighbor_rank = rank - 1;
+    const int lower_neighbor_rank  = rank + 1;
+
+    matrix_type next_chunk(chunk.size());
 
     for (std::size_t iteration = 0; iteration < iteration_count; ++iteration)
     {
+        row_type upper_row_received(n);
+        row_type lower_row_received(n);
 
-    }
-
-
-    /*MPI_Scatter(vector.data(), chunk_size, MPI_FLOAT, chunk.data(), chunk_size, MPI_FLOAT, 0, MPI_COMM_WORLD);
-
-    for (std::size_t i = 0; i < m; ++i)
-    {
-        value_type left_edge_to_receive = 0.0;
-        value_type right_edge_to_receive = 0.0;
-
-        if (is_left_edge)
+        if (has_upper_neighbor)
         {
-            next_chunk[0] = 1;
+            const value_type* upper_row_ptr = chunk.data();
+
+            MPI_Send(upper_row_ptr, n, MPI_FLOAT, upper_neighbor_rank, 0, MPI_COMM_WORLD);
+            MPI_Recv(upper_row_received.data(), n, MPI_FLOAT, upper_neighbor_rank, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
 
-        if (is_right_edge)
+        if (has_lower_neighbor)
         {
-            next_chunk[chunk_size - 1ull] = 1;
+            const value_type* lower_row_ptr = chunk.data() + chunk.size() - n;
+
+            MPI_Send(lower_row_ptr, n, MPI_FLOAT, lower_neighbor_rank, 0, MPI_COMM_WORLD);
+            MPI_Recv(lower_row_received.data(), n, MPI_FLOAT, lower_neighbor_rank, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
 
-        if (has_left_neighbor)
+        if (has_upper_neighbor)
         {
-            MPI_Send(&chunk[0], 1, MPI_FLOAT, left_neighbor_rank, 0, MPI_COMM_WORLD);
-            MPI_Recv(&left_edge_to_receive, 1, MPI_FLOAT, left_neighbor_rank, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            for (std::size_t j = 1u; j < n - 1; ++j)
+            {
+                next_chunk[0u * n + j] = smooth_neighborhood
+                (
+                    chunk[0u * n +        j],
+                    upper_row_received[j],
+                    chunk[0u * n + (j - 1u)],
+                    chunk[1u * n +        j],
+                    chunk[0u * n + (j + 1u)]
+                );
+            }
+        }
+        
+        if (has_lower_neighbor)
+        {
+            for (std::size_t j = 1u; j < n - 1; ++j)
+            {
+                next_chunk[(m_chunk - 1) * n + j] = smooth_neighborhood
+                (
+                    chunk[(m_chunk - 1u) * n +        j],
+                    chunk[(m_chunk - 2u) * n +        j],
+                    chunk[(m_chunk - 1u) * n + (j - 1u)],
+                    upper_row_received[j],
+                    chunk[(m_chunk - 1u) * n + (j + 1u)]
+                );
+            }
         }
 
-        if (has_right_neighbor)
+        for (std::size_t i = 1u; i < m_chunk - 1; ++i)
         {
-            MPI_Send(&chunk[chunk_size - 1ull], 1, MPI_FLOAT, right_neighbor_rank, 0, MPI_COMM_WORLD);
-            MPI_Recv(&right_edge_to_receive, 1, MPI_FLOAT, right_neighbor_rank, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            for (std::size_t j = 1u; j < n; ++j)
+            {
+                next_chunk[i * n + j] = smooth_neighborhood
+                (
+                    chunk[i * n + j],
+                    chunk[(i - 1u) * n + j],
+                    chunk[i * n + (j - 1u)],
+                    chunk[(i + 1u) * n + j],
+                    chunk[i * n + (j + 1u)]
+                );
+            }
         }
 
-        if (has_left_neighbor)
-        {
-            next_chunk[0] = chunk[0] == 1
-                ? 1
-                : (left_edge_to_receive + chunk[1]) / 2;
-        }
-
-        if (has_right_neighbor)
-        {
-            next_chunk[chunk_size - 1ull] = chunk[chunk_size - 1ull] == 1
-                ? 1
-                : (right_edge_to_receive + chunk[chunk_size - 2ull]) / 2;
-        }
-
-        for (int j = 1; j < chunk_size - 1; ++j)
-        {
-            if (chunk[j] == 1)
-                next_chunk[j] = 1;
-            else
-                next_chunk[j] = (chunk[j - 1ull] + chunk[j + 1ull]) / 2;
-        }
+        set_fixed_according_to_rank(next_chunk, fixed_values, rank, chunk.size());
 
         std::swap(next_chunk, chunk);
         MPI_Barrier(MPI_COMM_WORLD);
     }
-
-    vector_type resulting_vector(vector.size(), 0.0);
-    MPI_Gather(chunk.data(), chunk_size, MPI_FLOAT, resulting_vector.data(), chunk_size, MPI_FLOAT, 0, MPI_COMM_WORLD);
-*/
-
-
 }
 
 int main(int argc, char* argv[])
@@ -182,6 +240,13 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
+    if (number_of_processors >= m)
+    {
+        PRINTER << "Number of processors must be less then row count (m).";
+        MPI_Finalize();
+        return EXIT_FAILURE;
+    }
+
     PRINTER << "Number of processors: " << number_of_processors << '\n';
     PRINTER << "Iterations: " << iterations << '\n';
     PRINTER << "Matrix dimensions (m x n): " << m << " x " << n << '\n';
@@ -203,7 +268,7 @@ int main(int argc, char* argv[])
     if (m <= 20 && n <= 20)
     {
         PRINTER << "\nInitial matrix:\n";
-        PRINT_MATRIX(matrix);
+        PRINT_MATRIX(matrix, m, n);
     }
 
     PRINTER << '\n';
@@ -223,7 +288,7 @@ int main(int argc, char* argv[])
     if (m <= 20 && n <= 20)
     {
         PRINTER << "Result:\n";
-        PRINT_MATRIX(result);
+        PRINT_MATRIX(result, m, n);
     }
 
     double elapsed_time = end_time - start_time;
